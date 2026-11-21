@@ -1,0 +1,361 @@
+# Promptfoo eval configuration for the agentic RCA system
+# Run: promptfoo eval -c promptfoo.yaml --no-cache
+# View results: promptfoo view
+
+description: Agentic RCA System — Prompt Eval Suite (10 root cause types)
+
+prompts:
+  - id: hypothesis_generator
+    raw: |
+      You are a senior site reliability engineer synthesising findings from
+      multiple specialist agents to identify the root cause of a production incident.
+
+      You have received the following observations, each from a different evidence source:
+
+      {{observations}}
+
+      Your job is to synthesise these observations into a ranked list of root-cause hypotheses.
+
+      Rules:
+      - Rank 1 should be your most confident hypothesis
+      - Each hypothesis must cite the observation IDs that support it
+      - Be specific — name the service and failure mode using the exact terminology below
+      - If all observations point to the same cause, one ranked cause is fine
+      - Overall confidence should reflect how strongly the evidence converges
+
+      IMPORTANT — always use these exact failure-mode terms in your cause description:
+      - For database connection issues: "connection pool exhausted"
+      - For memory issues: "memory leak" or "out of memory"
+      - For cache issues: "cache expiry" or "cache miss rate"
+      - For rate limiting issues: "rate limiter misconfiguration"
+      - For cache eviction issues: "eviction storm"
+      - For network issues: "network packet loss"
+      - For disk issues: "disk I/O saturation"
+      - For TLS issues: "TLS certificate expiry"
+      - For thread pool issues: "thread pool exhausted"
+      - For DNS issues: "DNS resolution failures"
+
+      Return ONLY a JSON object with exactly these fields — no preamble, no explanation, no markdown:
+      {
+        "ranked_causes": [
+          {
+            "rank": 1,
+            "cause": "<specific description using exact failure-mode terms above, naming the service>",
+            "supporting_observation_ids": ["<id1>", "<id2>"],
+            "confidence": 0.0
+          }
+        ],
+        "overall_confidence": 0.0
+      }
+
+providers:
+  - id: ollama:llama3.1
+    config:
+      temperature: 0.0
+
+  - id: ollama:llama3.2
+    config:
+      temperature: 0.0
+
+tests:
+  - description: DB connection pool exhaustion
+    vars:
+      observations: |
+        observation_id=obs-001
+          source=log_reader
+          summary=Connection pool exhausted on db-proxy
+          evidence=ERROR db-proxy - connection pool exhausted: max_connections=100 active=100
+          confidence=0.90
+
+        observation_id=obs-002
+          source=metrics_analyst
+          summary=db.connection_pool.active at max threshold
+          evidence=metric=db.connection_pool.active value=100 threshold=100 service=db-proxy
+          confidence=0.90
+
+        observation_id=obs-003
+          source=trace_inspector
+          summary=db-proxy span timed out causing request failure
+          evidence=span_id=abc123 service=db-proxy operation=process duration_ms=3480 status=error error="db-proxy span timed out after 30000ms"
+          confidence=0.80
+    assert:
+      - type: contains
+        value: "db-proxy"
+      - type: javascript
+        value: output.toLowerCase().includes("connection pool")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes && parsed.ranked_causes.length > 0;
+
+  - description: Memory leak OOM
+    vars:
+      observations: |
+        observation_id=obs-004
+          source=log_reader
+          summary=OutOfMemoryError in payment-service causing restarts
+          evidence=FATAL payment-service - OutOfMemoryError: Java heap space
+          confidence=0.95
+
+        observation_id=obs-005
+          source=metrics_analyst
+          summary=payment-service memory usage near limit
+          evidence=metric=payment_service.memory.used_mb value=3900 threshold=4096 service=payment-service
+          confidence=0.90
+
+        observation_id=obs-006
+          source=trace_inspector
+          summary=payment-service span failed with connection reset
+          evidence=span_id=def456 service=payment-service operation=process duration_ms=5200 status=error error="payment-service span failed: connection reset by peer"
+          confidence=0.85
+    assert:
+      - type: contains
+        value: "payment-service"
+      - type: contains
+        value: "memory leak"
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.overall_confidence >= 0.7;
+
+  - description: Auth cache expiry latency spike
+    vars:
+      observations: |
+        observation_id=obs-007
+          source=log_reader
+          summary=Auth service cache miss rate critical, falling back to DB
+          evidence=WARN auth-service - cache miss rate=0.98 falling back to DB
+          confidence=0.85
+
+        observation_id=obs-008
+          source=metrics_analyst
+          summary=auth-service cache hit rate critically low
+          evidence=metric=auth_service.cache.hit_rate value=0.02 threshold=0.80 service=auth-service
+          confidence=0.90
+
+        observation_id=obs-009
+          source=trace_inspector
+          summary=auth-service span latency far above baseline
+          evidence=span_id=ghi789 service=auth-service operation=process duration_ms=4200 status=error error="auth-service span latency=4200ms (p99 baseline=120ms)"
+          confidence=0.85
+    assert:
+      - type: contains
+        value: "auth-service"
+      - type: contains
+        value: "cache"
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes[0].supporting_observation_ids.length > 0;
+
+  - description: API gateway rate limiter misconfiguration
+    vars:
+      observations: |
+        observation_id=obs-010
+          source=log_reader
+          summary=API gateway rate limiter incorrectly applied to internal traffic
+          evidence=ERROR api-gateway - rate limit applied to internal service traffic: rule=global_limit
+          confidence=0.90
+
+        observation_id=obs-011
+          source=metrics_analyst
+          summary=api-gateway dropping significant portion of requests
+          evidence=metric=api_gateway.requests.dropped_rate value=0.34 threshold=0.05 service=api-gateway
+          confidence=0.90
+
+        observation_id=obs-012
+          source=trace_inspector
+          summary=api-gateway returning 429 to downstream services
+          evidence=span_id=jkl012 service=api-gateway operation=handle_request duration_ms=12 status=error error="api-gateway returned 429 Too Many Requests to payment-service"
+          confidence=0.85
+    assert:
+      - type: javascript
+        value: output.toLowerCase().includes("api-gateway") || output.toLowerCase().includes("api gateway")
+      - type: javascript
+        value: output.toLowerCase().includes("rate limiter")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes && parsed.ranked_causes.length > 0;
+
+  - description: Cache eviction storm
+    vars:
+      observations: |
+        observation_id=obs-013
+          source=log_reader
+          summary=Cache service evicting keys at critical rate under load
+          evidence=WARN cache-service - eviction rate critical: evicted=45000 keys in last 60s
+          confidence=0.90
+
+        observation_id=obs-014
+          source=metrics_analyst
+          summary=cache-service eviction rate far above threshold
+          evidence=metric=cache_service.eviction_rate value=45000 threshold=1000 service=cache-service
+          confidence=0.90
+
+        observation_id=obs-015
+          source=trace_inspector
+          summary=cache-service returning misses for majority of keys
+          evidence=span_id=mno345 service=cache-service operation=process duration_ms=2 status=error error="cache-service returned MISS for 94% of keys"
+          confidence=0.80
+    assert:
+      - type: javascript
+        value: output.toLowerCase().includes("cache-service") || output.toLowerCase().includes("cache service")
+      - type: javascript
+        value: output.toLowerCase().includes("eviction storm")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.overall_confidence >= 0.7;
+
+  - description: Network packet loss causing service timeouts
+    vars:
+      observations: |
+        observation_id=obs-016
+          source=log_reader
+          summary=API gateway detecting packet loss on network interface
+          evidence=ERROR api-gateway - upstream timeout: packet loss detected on network interface eth0
+          confidence=0.85
+
+        observation_id=obs-017
+          source=metrics_analyst
+          summary=api-gateway network packet loss rate critical
+          evidence=metric=api_gateway.network.packet_loss_rate value=0.18 threshold=0.01 service=api-gateway
+          confidence=0.90
+
+        observation_id=obs-018
+          source=trace_inspector
+          summary=api-gateway span retrying repeatedly before failing
+          evidence=span_id=pqr678 service=api-gateway operation=handle_request duration_ms=9200 status=error error="api-gateway span retried 3 times before failing: network unreachable"
+          confidence=0.85
+    assert:
+      - type: javascript
+        value: output.toLowerCase().includes("api-gateway") || output.toLowerCase().includes("api gateway")
+      - type: javascript
+        value: output.toLowerCase().includes("network packet loss")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes[0].supporting_observation_ids.length > 0;
+
+  - description: Disk I/O saturation on database host
+    vars:
+      observations: |
+        observation_id=obs-019
+          source=log_reader
+          summary=db-proxy reporting critical disk I/O wait
+          evidence=ERROR db-proxy - disk I/O wait critical: iowait=94% read_latency=4200ms
+          confidence=0.90
+
+        observation_id=obs-020
+          source=metrics_analyst
+          summary=db-proxy disk iowait percent far above threshold
+          evidence=metric=db_proxy.disk.iowait_percent value=94 threshold=20 service=db-proxy
+          confidence=0.95
+
+        observation_id=obs-021
+          source=trace_inspector
+          summary=db-proxy span blocked on disk read before timeout
+          evidence=span_id=stu901 service=db-proxy operation=process duration_ms=8200 status=error error="db-proxy span blocked on disk read for 8200ms before timeout"
+          confidence=0.85
+    assert:
+      - type: contains
+        value: "db-proxy"
+      - type: javascript
+        value: output.toLowerCase().includes("disk i/o saturation")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.overall_confidence >= 0.7;
+
+  - description: TLS certificate expiry causing auth failures
+    vars:
+      observations: |
+        observation_id=obs-022
+          source=log_reader
+          summary=auth-service TLS handshake failing due to expired certificate
+          evidence=ERROR auth-service - TLS handshake failed: certificate expired 2 days ago
+          confidence=0.95
+
+        observation_id=obs-023
+          source=metrics_analyst
+          summary=auth-service TLS handshake failure rate critical
+          evidence=metric=auth_service.tls.handshake_failure_rate value=0.91 threshold=0.01 service=auth-service
+          confidence=0.95
+
+        observation_id=obs-024
+          source=trace_inspector
+          summary=auth-service span failing on SSL certificate verification
+          evidence=span_id=vwx234 service=auth-service operation=process duration_ms=120 status=error error="auth-service span failed: SSL: CERTIFICATE_VERIFY_FAILED"
+          confidence=0.90
+    assert:
+      - type: contains
+        value: "auth-service"
+      - type: javascript
+        value: output.toLowerCase().includes("tls certificate expiry")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes && parsed.ranked_causes.length > 0;
+
+  - description: Thread pool exhaustion in payment-service
+    vars:
+      observations: |
+        observation_id=obs-025
+          source=log_reader
+          summary=payment-service thread pool exhausted with deep queue backlog
+          evidence=ERROR payment-service - thread pool exhausted: active_threads=200 max_threads=200 queue_depth=4500
+          confidence=0.95
+
+        observation_id=obs-026
+          source=metrics_analyst
+          summary=payment-service thread pool queue depth far above threshold
+          evidence=metric=payment_service.thread_pool.queue_depth value=4500 threshold=100 service=payment-service
+          confidence=0.90
+
+        observation_id=obs-027
+          source=trace_inspector
+          summary=payment-service span waiting long time for available thread
+          evidence=span_id=yza567 service=payment-service operation=process duration_ms=12000 status=error error="payment-service span queued for 12000ms waiting for available thread"
+          confidence=0.85
+    assert:
+      - type: contains
+        value: "payment-service"
+      - type: javascript
+        value: output.toLowerCase().includes("thread pool exhausted")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.overall_confidence >= 0.7;
+
+  - description: DNS resolution failures causing intermittent connectivity
+    vars:
+      observations: |
+        observation_id=obs-028
+          source=log_reader
+          summary=cache-service DNS resolution failing for upstream database
+          evidence=ERROR cache-service - DNS resolution failed: Temporary failure in name resolution for upstream-db.internal
+          confidence=0.90
+
+        observation_id=obs-029
+          source=metrics_analyst
+          summary=cache-service DNS resolution failure rate critical
+          evidence=metric=cache_service.dns.resolution_failure_rate value=0.43 threshold=0.01 service=cache-service
+          confidence=0.90
+
+        observation_id=obs-030
+          source=trace_inspector
+          summary=cache-service span failing on DNS lookup for upstream host
+          evidence=span_id=bcd890 service=cache-service operation=process duration_ms=5000 status=error error="cache-service span failed: getaddrinfo ENOTFOUND upstream-db.internal"
+          confidence=0.85
+    assert:
+      - type: javascript
+        value: output.toLowerCase().includes("cache-service") || output.toLowerCase().includes("cache service")
+      - type: javascript
+        value: output.toLowerCase().includes("dns resolution failures")
+      - type: javascript
+        value: |
+          const parsed = JSON.parse(output);
+          return parsed.ranked_causes[0].supporting_observation_ids.length > 0;
+
+outputPath: evals/results/promptfoo_results.json

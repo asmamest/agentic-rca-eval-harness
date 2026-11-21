@@ -1,0 +1,31 @@
+# Orchestration
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# State / data modeling
+pydantic>=2.0
+
+# Eval
+# Note: Ragas was evaluated but not used — our typed Pydantic schema (Observation,
+# Hypothesis) did not map cleanly onto Ragas's RAG-pipeline input format.
+# Custom correctness, groundedness, and LLM-as-judge scorers were built instead.
+# promptfoo is a Node package — install via: npm install -g promptfoo
+
+# LLM providers (swap/add as needed)
+anthropic>=0.30.0
+ollama>=0.3.0
+requests>=2.31.0
+
+# Observability
+opentelemetry-api>=1.27.0
+opentelemetry-sdk>=1.27.0
+opentelemetry-exporter-otlp>=1.27.0
+arize-phoenix-otel>=0.6.0
+openinference-semantic-conventions>=0.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+pandas>=2.0.0
+matplotlib>=3.8.0
+reportlab>=4.0.0
